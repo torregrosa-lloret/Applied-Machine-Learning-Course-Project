@@ -1,0 +1,105 @@
+---
+title: 'Peer-graded Assignment'
+subtitle: 'Prediction Assignment Writeup'
+author: "Alfredo Torregrosa-Lloret"
+date: "23/08/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# 0. Import libraries
+Here, we will import the needed libraries for the analysis.
+```{r libraries, results=FALSE, message=FALSE, warning=FALSE}
+library(caret)
+library(dplyr)
+library(corrplot)
+```
+# 1. Download the data
+Then, we are going to download the data sets. First, we will create a new folder "data" to storage the sets, and then we will download them. It is worth noting that we have set the seed at 1010 to enable reproducibility.
+
+```{r download, cache=TRUE,results=FALSE, message=FALSE, warning=FALSE}
+# First, we'll set a seed
+set.seed(1010)
+# Create data directory
+if (!dir.exists("./data")){
+        dir.create("./data")
+}
+# Download training set
+download.file(url = "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", destfile = "./data/training.csv")
+# Download test set
+download.file(url = "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", destfile = "./data/testing.csv")
+```
+
+# 2. Split data
+Now, we will split the training set into two new sets, one for training (i.e. training set) and another one for testing (i.e. testing set). 
+
+```{r load}
+# Load training set and split it into training and testing
+trainingFull <- read.csv("./data/training.csv", header = TRUE, na.strings = c("","NA"))
+inTrain <- createDataPartition(y=trainingFull$classe, p=0.8, list = FALSE)
+training <- trainingFull[inTrain,]
+testing <- trainingFull[-inTrain,]
+# Load validation set
+validation <- read.csv("./data/testing.csv", header = TRUE, na.strings = c("","NA"))
+```
+# 3. Feature selection and data preprocessing
+Once splitted the set, we will select those feature which have less than 10% of missing data and we will remove features that seems to be metadeta (e.g. timestamps). Furthermore, we wil remove the user_name too because we don't want our model to be dependent on the user.
+
+```{r selection}
+na_count <- sapply(training, function(y) sum(is.na(y)))/(dim(training)[1])
+trainingPre <- select(training,names(na_count[na_count<0.1]), -(1:7))
+testingPre <- select(testing, names(trainingPre))
+validationPre <- select(validation, head(names(trainingPre),-1))
+```
+
+After this process, we have a training set with 53 variables and 15699 observations. It is possible that some of this variables are correlated between each other, so first we are going to compute the correlation between the variables.
+
+```{r correlation, out.width = "100%"}
+corMat <- cor(select(trainingPre, -classe))
+corrplot(corMat, method = "circle")
+```
+As wee can see in the plot, there are some variables that are highly correlated. Therefore, we will preprocess the data using PCA to reduce the dimensionality.
+
+```{r preprocessing}
+preProc <- preProcess(select(trainingPre, -classe), method="pca", thresh = 0.95)
+trainPC <- predict(preProc, select(trainingPre, -classe))
+trainPC$classe <- trainingPre$classe
+```
+PCA needed 25 components to capture 95 percent of the variance. 
+
+
+# 4. Prediction function
+We have our training data preprocessed and splitted, so now we are going to train 2 models: a CART model and a randon forest. We have decided to use only these two because there are the most common classifiers used during the course. Moreover, we have tried to train some bagged classifiers but the performance of the computer used for this analysis is not enough.
+
+```{r fit, cache=TRUE}
+modCART <- train(classe~., data=trainPC, method="rpart")
+modRF <- train(classe~., data=trainPC, method="rf")
+```
+
+If we see the summaries of each model, we can see that each model has been selected after a bootstraping resampling (n = 25) as cross validation method. Therefore, we expect that the out sample error will be higher than the insamble error, but we also believe that this in sample error is a good estimate of the out sample error.
+
+```{r summaries}
+modCART
+modRF
+```
+
+# 5. Testing
+Once we have trained the models with the training data set, we are going to measure its performance with the test dataset we have splitted in the first part of this analysis. It is worth noting that we have to apply the same preprocess to the test data.
+
+```{r test}
+testPC <- predict(preProc, testingPre)
+confusionMatrix(testing$classe, predict(modCART,testPC))
+confusionMatrix(testing$classe, predict(modRF,testPC))
+```
+Thus, we will choose the random forest model because it has a much higher accuracy than the other classifier.
+
+# 6. Prediction of new 20 cases
+Finally, we will predict the validation cases:
+
+```{r validation}
+validationPC <- predict(preProc, validationPre)
+data.frame(Case = 1:20, Prediction = predict(modRF,validationPC))
+```
